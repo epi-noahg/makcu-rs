@@ -1,0 +1,51 @@
+{
+    "version": "2.7",
+    "message": "MAKCU,                 The World's first and last free com injection solution",
+    "aio": {
+        "version": "2.7",
+        "name": "MAKCU_V2.7_1.exe",
+        "primary_url": "https://github.com/terrafirma2021/MAKCM_v2_files/raw/main/MAKCU_V2.7_1.exe",
+        "fallback_url": "https://gitee.com/terrafirma/MAKCM_v2_files/raw/main/MAKCU_V2.7_1.exe",
+        "changelog": [
+            "Welcome all members!",
+            "https://www.makcu.com"
+        ]
+    },
+    "main_aio_changelog": [
+        {
+            "changes": [
+                "Welcome all members!",
+                "https://www.makcu.com",
+                " ",
+                "UPDATED: roll back to v3.2 Left v3.4 Right",
+                "Fixes: Crash.",
+                "Random slow downs"
+            ]
+        }
+    ],
+    "firmware": {
+        "left": {
+            "version": "3.2",
+            "changelog": [],
+            "name": "V3.2_LEFT",
+            "primary_url": "https://github.com/terrafirma2021/MAKCM_v2_files/raw/main/V3.2_LEFT.bin",
+            "fallback_url": "https://gitee.com/terrafirma/MAKCM_v2_files/raw/main/V3.2_LEFT.bin"
+        },
+        "right": {
+            "version": "3.4",
+            "changelog": [],
+            "name": "V3.7_RIGHT",
+            "primary_url": "https://github.com/terrafirma2021/MAKCM_v2_files/raw/main/V3.7_RIGHT_TESTING.bin",
+            "fallback_url": "https://gitee.com/terrafirma/MAKCM_v2_files/raw/main/V3.7_RIGHT_TESTING.bin"
+        }
+    },
+    "config": {
+        "init_files": 1
+    },
+    "window_position": {
+        "x": 212,
+        "y": 127
+    },
+    "is_online": true,
+    "last_successful_server": "github"
+}

@@ -35,10 +35,16 @@ bool km_has_active_injection(void) {
 
 void km_set_kbd_endpoint(uint8_t ep_addr, uint16_t report_len) {
     g_kbd_ep = ep_addr;
-    // Boot keyboard report is 8 bytes with no report-ID. If a device advertises
-    // a 9-byte report we treat byte 0 as a report-ID.
-    bool has_id = (report_len >= 9);
-    kbd_set_layout(&g_kbd, has_id, report_len ? report_len : 8);
+    // NOTE: `report_len` is the endpoint's wMaxPacketSize, NOT the HID report
+    // length. Many boot keyboards send an 8-byte report on a 16/32/64-byte
+    // endpoint, so packet size cannot indicate whether a report-ID prefix is
+    // present. We target the standard boot keyboard (8-byte report, NO report
+    // ID) — modifiers at offset 0, keys at offset 2. Inferring a report-ID from
+    // MPS>=9 shifted the layout by one byte and dropped the first physical key
+    // slot (single keypress lost; two-key press emitted only the second).
+    // Real report-ID detection needs report-descriptor parsing (deferred).
+    (void)report_len;
+    kbd_set_layout(&g_kbd, false, 8);
 }
 
 bool km_is_kbd_ep(uint8_t ep_addr) {

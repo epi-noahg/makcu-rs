@@ -9,9 +9,9 @@ fn main() {
         std::process::exit(1);
     });
 
-    println!("Opening {port_name} at 115200...");
+    println!("Opening {port_name} at 4000000...");
 
-    let mut port = serialport::new(&port_name, 115_200)
+    let mut port = serialport::new(&port_name, 4_000_000)
         .timeout(Duration::from_millis(50))
         .open()
         .unwrap_or_else(|e| { eprintln!("Failed: {e}"); std::process::exit(1); });

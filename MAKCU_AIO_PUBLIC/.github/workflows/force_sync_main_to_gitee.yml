@@ -1,0 +1,29 @@
+name: Force Push Main to Gitee
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  force-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Full history for force push
+
+      - name: Set Git identity
+        run: |
+          git config --global user.name "${{ secrets.GITEE_USERNAME }}"
+          git config --global user.email "noreply@example.com"
+
+      - name: Force push main to Gitee
+        env:
+          GITEE_USERNAME: ${{ secrets.GITEE_USERNAME }}
+          GITEE_PAT: ${{ secrets.GITEE_PAT }}
+        run: |
+          git remote add gitee https://${GITEE_USERNAME}:${GITEE_PAT}@gitee.com/terrafirma/MAKCU_AIO_PUBLIC.git
+          git push gitee main --force
+          git push gitee --tags --force

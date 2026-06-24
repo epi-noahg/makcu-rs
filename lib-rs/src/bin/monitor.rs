@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
     });
 
     println!("Connecting to {port} ...");
-    let dev = Device::new(&port, 115_200, Duration::from_millis(100));
+    let dev = Device::new(&port, 4_000_000, Duration::from_millis(100));
     dev.connect()?;
     println!("Connected. Listening for events — press Ctrl+C to quit.\n");
 

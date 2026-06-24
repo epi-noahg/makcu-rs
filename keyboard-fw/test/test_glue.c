@@ -75,6 +75,29 @@ static void test_down_apply(void) {
     ASSERT_FALSE(has_key(r, 4));
 }
 
+// Regression: a keyboard whose IN endpoint advertises a large wMaxPacketSize
+// (e.g. 64) must STILL be treated as an 8-byte boot report with NO report-ID.
+// Previously km_set_kbd_endpoint inferred a report-ID from MPS>=9, shifting the
+// layout by one byte and dropping the first physical key slot — a single
+// keypress was lost and a two-key press emitted only the second key.
+static void test_large_mps_boot_passthrough(void) {
+    km_init();
+    km_set_kbd_endpoint(0x81, 64);   // real keyboard: 8-byte report on 64-byte EP
+    tick(0);
+    reset_reply();
+
+    // physical 'a' (HID 4) in the FIRST key slot, no injection active.
+    uint8_t r[8] = {0, 0, 4, 0, 0, 0, 0, 0};
+    km_apply(0x81, r, 8);
+    ASSERT_TRUE(has_key(r, 4));       // slot-0 key must pass through
+
+    // two keys held: BOTH pass through, not just the last.
+    uint8_t r2[8] = {0, 0, 4, 5, 0, 0, 0, 0};
+    km_apply(0x81, r2, 8);
+    ASSERT_TRUE(has_key(r2, 4));
+    ASSERT_TRUE(has_key(r2, 5));
+}
+
 static void test_press_timed(void) {
     setup_kbd();
     feed("km.press('a',50)");
@@ -161,6 +184,7 @@ int main(void) {
     TF_BEGIN();
     TF_RUN(test_version_reply);
     TF_RUN(test_down_apply);
+    TF_RUN(test_large_mps_boot_passthrough);
     TF_RUN(test_press_timed);
     TF_RUN(test_string);
     TF_RUN(test_disable_and_inject);

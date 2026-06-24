@@ -1315,6 +1315,22 @@ impl Device {
 
     pub fn get_screen(&self) -> MakcuResult<String> { self.send_tr("km.screen()", 1.0) }
 
+    // ---- Raw protocol escape hatch ----
+
+    /// Send a raw protocol command line, fire-and-forget. `CRLF` is appended
+    /// automatically. Use this to exercise commands that have no dedicated
+    /// wrapper (handy for tooling / manual protocol testing).
+    pub fn send_raw(&self, cmd: &str) -> MakcuResult<()> {
+        self.send_ff(cmd)
+    }
+
+    /// Send a raw protocol command and block up to `timeout_s` for the device's
+    /// tracked reply. Appends a tracking id (`#<n>`) so the matching response is
+    /// returned even amid streaming traffic.
+    pub fn send_raw_tracked(&self, cmd: &str, timeout_s: f32) -> MakcuResult<String> {
+        self.send_tr(cmd, timeout_s)
+    }
+
     pub fn profiler_stats() -> FxHashMap<&'static str, FxHashMap<&'static str, f64>> {
         PerformanceProfiler::stats()
     }

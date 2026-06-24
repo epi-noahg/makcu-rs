@@ -6,7 +6,7 @@ use std::time::Duration;
 
 fn main() -> anyhow::Result<()> {
 
-    let dev = Device::new("/dev/cu.usbmodem5B906937721", 115_200, Duration::from_millis(10));
+    let dev = Device::new("/dev/cu.usbmodem5B906937721", 4_000_000, Duration::from_millis(10));
 
     dev.connect()?;
 
