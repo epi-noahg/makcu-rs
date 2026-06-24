@@ -41,19 +41,27 @@ pub enum MakcuError {
     Timeout(u32),
 }
 
+/// Convenience alias for results returned by Makcu operations.
 pub type MakcuResult<T> = Result<T, MakcuError>;
 
 // ========================= Helper structures ===============================
 
+/// Pressed/released state of every supported mouse button.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MouseButtonStates {
+    /// Left button is pressed.
     pub left: bool,
+    /// Right button is pressed.
     pub right: bool,
+    /// Middle button is pressed.
     pub middle: bool,
+    /// First side button is pressed.
     pub side1: bool,
+    /// Second side button is pressed.
     pub side2: bool,
 }
 impl MouseButtonStates {
+    /// Build the state set from a device button bitmask.
     #[inline]
     pub fn from_mask(mask: u8) -> Self {
         Self {
@@ -64,6 +72,7 @@ impl MouseButtonStates {
             side2: mask & 0x10 != 0,
         }
     }
+    /// Pack the button states back into a device bitmask.
     #[allow(dead_code)]
     #[inline]
     pub fn to_mask(self) -> u8 {
@@ -145,12 +154,18 @@ impl PerformanceProfiler {
 
 // ================================ SerialPort ===============================
 
+// Callback container aliases — keep the complex `Arc<RwLock<Option<Box<dyn …>>>>`
+// type spelled out once instead of at every use site.
+type ButtonCbSlot = RwLock<Option<Box<dyn Fn(MouseButtonStates) + Send + Sync>>>;
+type StreamCbSlot = RwLock<Option<Box<dyn Fn(String) + Send + Sync>>>;
+type ButtonCb = Arc<ButtonCbSlot>;
+type StreamCb = Arc<StreamCbSlot>;
+
 #[derive(Debug)]
 struct Packet {
     data: Vec<u8>,
     tag: &'static str,
     started: Instant,
-    tracked_id: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -177,12 +192,13 @@ pub struct SerialPortWrap {
     tx: Option<TxHandle>,
 
     pending: Arc<Mutex<FxHashMap<u32, PendingCommand>>>,
-    button_cb: Arc<RwLock<Option<Box<dyn Fn(MouseButtonStates) + Send + Sync>>>>,
-    stream_cb: Arc<RwLock<Option<Box<dyn Fn(String) + Send + Sync>>>>,
+    button_cb: ButtonCb,
+    stream_cb: StreamCb,
     cmd_id: AtomicU32,
 }
 
 impl SerialPortWrap {
+    /// Create a wrapper for the given port without opening it yet.
     pub fn new(port: impl Into<String>, baud: u32, timeout: Duration) -> Self {
         Self {
             port_name: port.into(),
@@ -200,6 +216,7 @@ impl SerialPortWrap {
         }
     }
 
+    /// Open the serial port and spawn the reader/writer worker threads.
     pub fn open(&mut self) -> MakcuResult<()> {
         if self.is_open() {
             return Ok(());
@@ -208,42 +225,37 @@ impl SerialPortWrap {
             .timeout(self.timeout)
             .open()
             .map_err(|e| MakcuError::Connection(e.to_string()))?;
-        self.ser = Some(ser.into());
+        self.ser = Some(ser);
         self.stop.store(false, Ordering::Relaxed);
 
         // ---------- writer ----------
         let (tx, rx): (Sender<Packet>, Receiver<Packet>) = bounded(1024);
         let mut wport = self.ser.as_mut().unwrap().try_clone().unwrap();
-        let stop_w = self.stop.clone();
         self.writer = Some(thread::spawn(move || {
             let mut buf = Vec::<u8>::with_capacity(4096);
             // Loop until the TX channel is closed (sender dropped) AND all pending
             // packets have been written. `rx.recv()` returns Err only when the channel
             // is empty AND every sender has been dropped — that is our clean-shutdown signal.
-            loop {
-                match rx.recv() {
-                    Ok(first) => {
-                        let current_tag = first.tag;
-                        let started     = first.started;
-                        buf.clear();
-                        buf.extend_from_slice(&first.data);
-                        // Drain any additional packets that arrived in the meantime.
-                        while let Ok(pk) = rx.try_recv() {
-                            buf.extend_from_slice(&pk.data);
-                        }
-                        if buf.iter().any(|&b| b != 0) {
-                            if let Err(e) = wport.write_all(&buf) {
-                                eprintln!("writer error: {e}");
-                                break;
-                            }
-                            // Flush so the OS actually pushes bytes to the serial hardware.
-                            let _ = wport.flush();
-                        }
-                        PerformanceProfiler::prof(current_tag, started);
-                    }
-                    // Channel closed and empty — all data has been sent, safe to exit.
-                    Err(_) => break,
+            // `rx.recv()` returns Err only when the channel is empty AND every sender
+            // has been dropped — that is our clean-shutdown signal, ending the loop.
+            while let Ok(first) = rx.recv() {
+                let current_tag = first.tag;
+                let started     = first.started;
+                buf.clear();
+                buf.extend_from_slice(&first.data);
+                // Drain any additional packets that arrived in the meantime.
+                while let Ok(pk) = rx.try_recv() {
+                    buf.extend_from_slice(&pk.data);
                 }
+                if buf.iter().any(|&b| b != 0) {
+                    if let Err(e) = wport.write_all(&buf) {
+                        eprintln!("writer error: {e}");
+                        break;
+                    }
+                    // Flush so the OS actually pushes bytes to the serial hardware.
+                    let _ = wport.flush();
+                }
+                PerformanceProfiler::prof(current_tag, started);
             }
         }));
         self.tx = Some(TxHandle { queue: tx });
@@ -261,6 +273,7 @@ impl SerialPortWrap {
         Ok(())
     }
 
+    /// Stop the worker threads, flush pending writes, and close the port.
     pub fn close(&mut self) {
         // Drop the TX handle first — this closes the channel so the writer thread
         // drains all queued packets and then exits cleanly via Err(_) on recv().
@@ -285,6 +298,7 @@ impl SerialPortWrap {
     }
 
 
+    /// Whether the underlying serial port is currently open.
     #[inline] pub fn is_open(&self) -> bool { self.ser.is_some() }
 
     #[inline] fn next_id(&self) -> u32 {
@@ -298,6 +312,7 @@ impl SerialPortWrap {
              .map(|h| h.send(packet))
     }
 
+    /// Fire-and-forget: queue a command without waiting for a reply.
     pub fn send_ff(&self, payload: &str) -> MakcuResult<()> {
         if dbg() { println!("[TX] {payload}"); }
         let mut v = Vec::with_capacity(payload.len() + 2);
@@ -311,12 +326,13 @@ impl SerialPortWrap {
         }
         self.enqueue_ff(Packet{
              data: v,
-             tag: "move",           
+             tag: "move",
              started: Instant::now(),
-             tracked_id: None,
         })
     }
 
+    /// Send a command tagged with an id and block until the matching reply
+    /// arrives or `timeout_s` elapses.
     pub fn send_tracked(&self, payload: &str, timeout_s: f32) -> MakcuResult<String> {
         if dbg() { println!("[TX tracked] {payload}"); }
         let started = Instant::now();
@@ -333,7 +349,7 @@ impl SerialPortWrap {
         let mut v = Vec::with_capacity(payload.len() + 16);
         v.extend_from_slice(payload.as_bytes());
         v.extend_from_slice(format!("#{cid}{CRLF}").as_bytes());
-        self.enqueue_ff(Packet { data: v, tag, started, tracked_id: Some(cid) })?;
+        self.enqueue_ff(Packet { data: v, tag, started })?;
 
         match rx.recv_timeout(Duration::from_secs_f32(timeout_s)) {
             Ok(resp) => Ok(resp),
@@ -344,6 +360,7 @@ impl SerialPortWrap {
         }
     }
 
+    /// Set (or clear with `None`) the callback invoked on button-state updates.
     pub fn set_button_callback<F>(&self, cb: Option<F>)
     where
         F: Fn(MouseButtonStates) + Send + Sync + 'static,
@@ -351,6 +368,7 @@ impl SerialPortWrap {
         *self.button_cb.write() = cb.map(|f| Box::new(f) as _);
     }
 
+    /// Set (or clear with `None`) the callback invoked on unsolicited stream lines.
     pub fn set_stream_callback<F>(&self, cb: Option<F>)
     where
         F: Fn(String) + Send + Sync + 'static,
@@ -365,8 +383,8 @@ fn reader_loop(
     ser: &mut dyn SerialPort,
     stop: Arc<AtomicBool>,
     pending: Arc<Mutex<FxHashMap<u32, PendingCommand>>>,
-    button_cb: Arc<RwLock<Option<Box<dyn Fn(MouseButtonStates) + Send + Sync>>>>,
-    stream_cb: Arc<RwLock<Option<Box<dyn Fn(String) + Send + Sync>>>>,
+    button_cb: ButtonCb,
+    stream_cb: StreamCb,
 ) {
     const BUF_TMP: usize = 512;
     let mut buf = BytesMut::with_capacity(2048);
@@ -437,7 +455,7 @@ fn reader_loop(
 fn handle_line_bytes(
     line: &[u8],
     pending: &Mutex<FxHashMap<u32, PendingCommand>>,
-    stream_cb: &RwLock<Option<Box<dyn Fn(String) + Send + Sync>>>,
+    stream_cb: &StreamCbSlot,
 ) {
     if dbg() {
         match std::str::from_utf8(line) {
@@ -453,8 +471,7 @@ fn handle_line_bytes(
                 .and_then(|s| s.parse::<u32>().ok())
             {
                 if let Some(pc) = pending.lock().remove(&cid) {
-                    let dt = pc.started.elapsed();
-                    PerformanceProfiler::prof(pc.tag, pc.started); 
+                    PerformanceProfiler::prof(pc.tag, pc.started);
                     let payload =
                         String::from_utf8_lossy(&line[hash + 1 + colon + 1..]).into_owned();
                     let _ = pc.tx.send(payload);
@@ -504,6 +521,7 @@ fn handle_line_bytes(
     }
 }
 
+/// Builder that accumulates several commands and sends them in one write.
 pub struct Batch<'a> {
     dev: &'a Device,
     buf: String,
@@ -525,17 +543,20 @@ impl<'a> Batch<'a> {
        }
    }
 
+    /// Queue a relative move by `(dx, dy)`.
     pub fn move_rel(mut self, dx:i32, dy:i32) -> Self {
         Self::mark("move");
         use std::fmt::Write; let _ = write!(self.buf,"km.move({dx},{dy}){CRLF}");
         self
     }
+    /// Queue a full click (press + release) of `btn`.
     pub fn click(mut self, btn:MouseButton) -> Self {
         Self::mark("click");
         use std::fmt::Write;
        let _ = write!(self.buf, "km.{}(){CRLF}", Self::btn_name(btn));
        self
     }
+    /// Queue a press of `btn`.
     pub fn press(mut self, btn: MouseButton) -> Self {
        Self::mark("press");
        use std::fmt::Write;
@@ -543,51 +564,61 @@ impl<'a> Batch<'a> {
        self
    }
 
+    /// Queue a release of `btn`.
     pub fn release(mut self, btn: MouseButton) -> Self {
        Self::mark("release");
        use std::fmt::Write;
        let _ = write!(self.buf, "km.{}(0){CRLF}", Self::btn_name(btn));
         self
     }
+    /// Queue a wheel scroll by `d`.
     pub fn wheel(mut self, d:i32)->Self {
         Self::mark("wheel");
         use std::fmt::Write;  let _ = write!(self.buf, "km.wheel({d}){CRLF}");
         self
     }
+    /// Queue an absolute move to `(x, y)`.
     pub fn move_abs(mut self, x:i32, y:i32)->Self {
         use std::fmt::Write; let _ = write!(self.buf, "km.moveto({x},{y}){CRLF}");
         self
     }
+    /// Queue a horizontal pan by `steps`.
     pub fn pan(mut self, steps:i32)->Self {
         use std::fmt::Write; let _ = write!(self.buf, "km.pan({steps}){CRLF}");
         self
     }
+    /// Queue a tilt scroll by `steps`.
     pub fn tilt(mut self, steps:i32)->Self {
         use std::fmt::Write; let _ = write!(self.buf, "km.tilt({steps}){CRLF}");
         self
     }
+    /// Queue a raw mouse frame.
     pub fn mouse_raw(mut self, buttons:u8, x:i32, y:i32, whl:i32, pan:i32, tilt:i32)->Self {
         use std::fmt::Write;
         let _ = write!(self.buf, "km.mo({buttons},{x},{y},{whl},{pan},{tilt}){CRLF}");
         self
     }
+    /// Queue a key-down for `key`.
     pub fn key_down(mut self, key:&str)->Self {
         use std::fmt::Write; let _ = write!(self.buf, "km.down({key}){CRLF}");
         self
     }
+    /// Queue a key-up for `key`.
     pub fn key_up(mut self, key:&str)->Self {
         use std::fmt::Write; let _ = write!(self.buf, "km.up({key}){CRLF}");
         self
     }
+    /// Queue a key press (down + up) for `key`.
     pub fn key_press(mut self, key:&str)->Self {
         use std::fmt::Write; let _ = write!(self.buf, "km.press({key}){CRLF}");
         self
     }
+    /// Flush all queued commands to the device in a single write.
     pub fn run(self) -> MakcuResult<()> {
-        Ok(PerformanceProfiler::measure("batch", || {
-
+        PerformanceProfiler::measure("batch", || {
             let _ = self.dev.send_ff(&self.buf);
-        }))
+        });
+        Ok(())
     }
 }
 
