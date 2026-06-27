@@ -31,3 +31,12 @@ jobs:
     - name: Run host unit tests
       run: make test
       working-directory: keyboard-fw
+
+  keyboard-fw-latency:
+    name: keyboard-fw latency tool (macOS)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build + unit tests
+      run: cargo test --verbose
+      working-directory: keyboard-fw/latency-test

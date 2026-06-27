@@ -1,0 +1,23 @@
+[package]
+name = "kbd-latency"
+version = "0.1.0"
+edition = "2021"
+description = "End-to-end latency & jitter measurement for the MAKCU keyboard firmware (SIGTAP signal-tap correlated against the macOS HID layer)."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "kbd-latency"
+path = "src/main.rs"
+
+[dependencies]
+serialport = "4"
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = true

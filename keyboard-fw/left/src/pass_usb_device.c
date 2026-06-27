@@ -30,6 +30,7 @@
 #include "device/usbd_pvt.h"
 #include "tinyusb.h"
 #include "pass_ipc.h"
+#include "sigtap.h"
 
 // Latency diagnostic — emits one line per LAT_DIAG_EMIT_N IN submissions:
 //   [L] LAT n=100 sub=12/34/178us gap=3120/4012/8220us coal=0
@@ -134,6 +135,9 @@ typedef struct {
     uint16_t tpl_len;
     bool     tpl_have;
     int64_t  last_real_us;
+#if SIGTAP
+    int64_t  pending_cap_us;   // capture stamp of the coalesced in_pending report
+#endif
 } OpenEp;
 
 static OpenEp  open_eps[PASS_MAX_EPS];
@@ -364,22 +368,36 @@ static bool pass_driver_xfer_cb(uint8_t rhport, uint8_t ep_addr,
         // promote it to rx_buf and submit — keeps the freshest snapshot
         // in flight; drops are replaced by overwrites.
         uint16_t promote_len = 0;
+#if SIGTAP
+        int64_t  promote_cap = 0;
+#endif
         portENTER_CRITICAL(&io_lock);
         if (slot->in_pending_len > 0) {
             promote_len = slot->in_pending_len;
             memcpy(slot->rx_buf, slot->in_pending_buf, promote_len);
             slot->in_pending_len = 0;
+#if SIGTAP
+            promote_cap = slot->pending_cap_us;
+#endif
             // in_flight stays true — a new xfer is about to go out.
         } else {
             slot->in_flight = false;
         }
         portEXIT_CRITICAL(&io_lock);
         if (promote_len) {
+#if SIGTAP
+            int64_t t_sub = esp_timer_get_time();
+#endif
             if (!usbd_edpt_xfer(rhport, ep_addr, slot->rx_buf, promote_len)) {
                 portENTER_CRITICAL(&io_lock);
                 slot->in_flight = false;
                 portEXIT_CRITICAL(&io_lock);
             }
+#if SIGTAP
+            // promote_cap==0 marks a synth-origin report — never a real keypress.
+            else if (promote_cap != 0)
+                sigtap_report(promote_cap, t_sub, slot->rx_buf, promote_len);
+#endif
         }
     } else {
         if (result == XFER_RESULT_SUCCESS && xferred) {
@@ -466,6 +484,9 @@ static bool submit_in_core(uint8_t ep_addr, const uint8_t *data, uint16_t len, b
 
     bool start_xfer = false;
     bool coalesced  = false;
+#if SIGTAP
+    int64_t t_cap = is_synth ? 0 : sigtap_last_capture();
+#endif
     portENTER_CRITICAL(&io_lock);
     if (!slot->in_flight) {
         memcpy(slot->rx_buf, scratch, len);
@@ -475,6 +496,9 @@ static bool submit_in_core(uint8_t ep_addr, const uint8_t *data, uint16_t len, b
         if (slot->in_pending_len > 0) coalesced = true;
         memcpy(slot->in_pending_buf, scratch, len);
         slot->in_pending_len = len;
+#if SIGTAP
+        slot->pending_cap_us = t_cap;
+#endif
     }
     portEXIT_CRITICAL(&io_lock);
 
@@ -486,6 +510,9 @@ static bool submit_in_core(uint8_t ep_addr, const uint8_t *data, uint16_t len, b
             portEXIT_CRITICAL(&io_lock);
             ok = false;
         } else {
+#if SIGTAP
+            int64_t t_sub = is_synth ? 0 : esp_timer_get_time();
+#endif
             ok = usbd_edpt_xfer(0, ep_addr, slot->rx_buf, len);
             if (!ok) {
                 usbd_edpt_release(0, ep_addr);
@@ -493,8 +520,15 @@ static bool submit_in_core(uint8_t ep_addr, const uint8_t *data, uint16_t len, b
                 slot->in_flight = false;
                 portEXIT_CRITICAL(&io_lock);
             }
+#if SIGTAP
+            else if (!is_synth)
+                sigtap_report(t_cap, t_sub, slot->rx_buf, len);
+#endif
         }
     }
+#if SIGTAP
+    if (coalesced && !is_synth) sigtap_note_drop();
+#endif
 #if LAT_DIAG
     int64_t t1 = esp_timer_get_time();
     int64_t dt_sub = t1 - t0;

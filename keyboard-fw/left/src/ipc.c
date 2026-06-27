@@ -11,6 +11,7 @@
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "pass_ipc.h"
+#include "sigtap.h"
 
 #define IPC_UART_PORT     UART_NUM_1
 #define IPC_UART_BAUD     5000000
@@ -94,6 +95,9 @@ static void ipc_feed(uint8_t b) {
             for (int k = 0; k < 8; ++k) crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
         }
         if (crc == rx_crc_rcvd) {
+            // Lowest-level capture: stamp the instant a keyboard report is in
+            // hand, before any dispatch/overlay work. No-op unless SIGTAP.
+            if (rx_type == FRAME_EP_IN) sigtap_mark_capture();
             ipc_handle_frame(rx_type, rx_ep, rx_seq, rx_buf, rx_len);
         } else {
             ESP_LOGW(TAG, "CRC fail type=0x%02x len=%u", rx_type, rx_len);

@@ -70,6 +70,16 @@ Integration checklist (Phase 7):
    injected `key_down('a')` still passes (injection is never filtered).
 5. Hot-plug the keyboard on RIGHT — no freeze.
 
+## Latency & jitter testing
+
+`latency-test/` is a macOS Rust tool that measures keystroke latency and jitter
+end to end. Build LEFT with the `LEFT_KBD_SIGTAP` env (adds the `SIGTAP` signal-
+tap: raw, lowest-level report timestamping on UART0, zero cost when off), plug
+both the emulated keyboard (USB) and the CH343 serial into the Mac, and run
+`cargo run --release -- --vid <id> --pid <id>`. It reports the firmware's exact
+internal latency and the full end-to-end latency + jitter. See
+`latency-test/README.md`.
+
 ## Deferred (documented, out of scope for v1)
 
 Full HID **report-descriptor** parsing (NKRO / arbitrary layouts) via a new

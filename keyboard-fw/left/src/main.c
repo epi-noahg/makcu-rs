@@ -13,6 +13,7 @@
 #include "tinyusb.h"
 #include "pass_ipc.h"
 #include "cfgdesc.h"
+#include "sigtap.h"
 
 void ipc_init(void);
 bool ipc_send(uint8_t type, uint8_t ep_addr, uint16_t seq,
@@ -302,6 +303,7 @@ void app_main(void) {
     ESP_LOGI(TAG, "Pass_Left up — waiting for descriptors from Right on UART1");
     ipc_init();
     km_init();
+    sigtap_init();   // no-op unless built with -DSIGTAP=1
     xTaskCreatePinnedToCore(led_task,  "led",   2048, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(main_task, "main",  4096, NULL, 3, &main_task_handle, 1);
 }

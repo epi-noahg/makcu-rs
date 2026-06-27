@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.c" "ipc.c" "pass_usb_device.c" "km_platform.c"
+    SRCS "main.c" "ipc.c" "pass_usb_device.c" "km_platform.c" "sigtap.c"
          "../../core/keymap.c"
          "../../core/km_protocol.c"
          "../../core/kbd_inject.c"
